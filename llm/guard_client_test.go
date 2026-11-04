@@ -269,6 +269,46 @@ func TestGuardedClient_CreateChatCompletionWithLog(t *testing.T) {
 			t.Errorf("expected input 'hello', got '%s'", mockRepo.SavedLogs[0].InputContent)
 		}
 	})
+
+	groupTests := map[string]struct {
+		want    string
+		groupID string
+	}{
+		"GroupID を渡せばログに保存する":    {want: "helpful-c7", groupID: "helpful-c7"},
+		"GroupID を渡さなければ空（NULL）": {want: "", groupID: ""},
+	}
+	for name, tc := range groupTests {
+		t.Run(name, func(t *testing.T) {
+			mockRepo := &MockRepository{Config: &LLMFunctionConfig{FuncFeature: feature, DailyLimit: 100, IsActive: true}}
+			client := NewGuardedClient(&MockInternalClient{Response: &ChatResponse{Content: "OK"}}, mockRepo, feature, &spyLogger{})
+
+			if _, _, err := client.CreateChatCompletionWithLog(ctx, &ChatRequest{Prompt: "hello", GroupID: tc.groupID}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(mockRepo.SavedLogs) != 1 {
+				t.Fatalf("expected 1 log, got %d", len(mockRepo.SavedLogs))
+			}
+			got := mockRepo.SavedLogs[0].GroupID
+			if got != tc.want {
+				t.Errorf("GroupID = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("上限で断った呼び出しのログにも GroupID を残す", func(t *testing.T) {
+		mockRepo := &MockRepository{Config: &LLMFunctionConfig{FuncFeature: feature, DailyLimit: 0, IsActive: true}}
+		client := NewGuardedClient(&MockInternalClient{}, mockRepo, feature, &spyLogger{})
+
+		_, _, err := client.CreateChatCompletionWithLog(ctx, &ChatRequest{Prompt: "hello", GroupID: "helpful-c7"})
+
+		if !IsDailyLimitExceeded(err) {
+			t.Fatalf("err = %v, want daily limit exceeded", err)
+		}
+		if len(mockRepo.SavedLogs) != 1 || mockRepo.SavedLogs[0].GroupID != "helpful-c7" {
+			t.Errorf("limited のログの GroupID が残っていない: %+v", mockRepo.SavedLogs)
+		}
+	})
 }
 
 func TestGuardedClient_SaveLogFailure(t *testing.T) {

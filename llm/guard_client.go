@@ -63,6 +63,7 @@ func (c *GuardedClient) CreateChatCompletionWithLog(ctx context.Context, req *Ch
 		}
 		log := &LLMLog{
 			FuncFeature:   c.feature,
+			GroupID:       req.GroupID,
 			Memo:          req.Memo,
 			Status:        status,
 			InputTokens:   inputTokens,

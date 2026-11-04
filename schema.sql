@@ -20,9 +20,12 @@ CREATE TABLE IF NOT EXISTS `llm_function_configs` (
 ) COMMENT='LLM機能ごとの設定管理';
 
 -- 呼び出し 1 回ごとの記録。断った呼び出し（limited / disabled / config_missing）も残す。
+-- group_id は集計用の 1 列で、中身の意味は使う側の製品が system に置く集計用のテーブルで持つ（README の「group_id」）。
+-- 🔴 この表には今後カラムを足さない。足したい属性は、その製品の集計用のテーブルのカラムにする。
 CREATE TABLE IF NOT EXISTS `llm_logs` (
     `id` BIGINT AUTO_INCREMENT NOT NULL COMMENT 'ログID',
     `func_feature` VARCHAR(50) NOT NULL COMMENT '機能ID',
+    `group_id` VARCHAR(64) NULL DEFAULT NULL COMMENT '集計用の値（使う側が決める・製品名で始める・未指定は NULL）',
     `memo` VARCHAR(255) COMMENT '実行目的等のメモ',
     `status` INT NOT NULL COMMENT 'ステータス (1:success, 2:failed, 3:limited, 4:disabled, 5:config_missing)',
     `input_tokens` INT NOT NULL DEFAULT 0 COMMENT '入力トークン数',
@@ -34,5 +37,6 @@ CREATE TABLE IF NOT EXISTS `llm_logs` (
     `app_error` TEXT COMMENT 'アプリ検証エラー内容',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
     PRIMARY KEY (`id`),
-    INDEX `idx_func_created` (`func_feature`, `created_at`)
+    INDEX `idx_func_created` (`func_feature`, `created_at`),
+    INDEX `idx_group_created` (`group_id`, `created_at`)
 ) COMMENT='LLM実行履歴';

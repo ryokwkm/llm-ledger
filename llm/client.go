@@ -20,6 +20,8 @@ type ChatRequest struct {
 	Prompt    string
 	MaxTokens int
 	Memo      string
+	// GroupID は llm_logs.group_id に入れる集計用の値。空なら NULL（列ごと書かない）。意味と決まりは README の「group_id」
+	GroupID string
 }
 
 type InternalClient interface {

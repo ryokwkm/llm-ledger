@@ -46,7 +46,7 @@ if ok, err := client.Available(ctx); err != nil || !ok {
 	return err // 今日の上限か緊急停止。重い準備に入らない
 }
 
-text, handle, err := client.CreateChatCompletionWithLog(ctx, &llm.ChatRequest{Prompt: prompt, Memo: "user_id:1"})
+text, handle, err := client.CreateChatCompletionWithLog(ctx, &llm.ChatRequest{Prompt: prompt, Memo: "user_id:1", GroupID: "myapp-c7"}) // GroupID は省略してよい
 if err != nil {
 	return err
 }
@@ -66,6 +66,38 @@ handle.MarkAsValid(ctx)
 - `daily_limit`: 当日（アプリのタイムゾーンの 0 時起点）の成功と失敗の合計がこの値に達したら断ります。`-1` は無制限、`0` は 1 回も呼びません
 - `is_active`: `0` にするとその機能だけ止まります（緊急停止）
 - `max_tokens`: `ChatRequest.MaxTokens` を 0 にしたときに使われます
+
+## group_id（集計用の 1 列）
+
+`llm_logs.group_id` は、呼び出しを使う側の単位（企業・サイトなど）で数えるための 1 列です。`ChatRequest.GroupID` で呼び出しごとに渡します。空なら NULL です。
+
+中身の意味は llm-ledger は持ちません。使う側の製品が、集計用のテーブルを `system` に自由なカラムで作り、`group_id` で JOIN して数えます。llm-ledger はこのテーブルを読みも書きもしません。
+
+```sql
+-- 例: 企業とサイトで数える製品
+CREATE TABLE IF NOT EXISTS `system`.`myapp_llm_groups` (
+    `group_id` VARCHAR(64) NOT NULL,   -- 例: myapp-c7-s3
+    `company_id` BIGINT UNSIGNED NOT NULL,
+    `site_id` BIGINT UNSIGNED NULL,
+    PRIMARY KEY (`group_id`)
+);
+
+SELECT g.company_id, COUNT(*), SUM(l.input_tokens), SUM(l.output_tokens)
+FROM `system`.`llm_logs` l JOIN `system`.`myapp_llm_groups` g ON g.group_id = l.group_id
+GROUP BY g.company_id;
+```
+
+- `llm_logs` には今後カラムを足しません。数えたい属性が増えたら、その製品の集計用のテーブルにカラムを足します
+- 集計用のテーブルの名前には製品名を入れます。カラムは製品ごとに違うので、同じ名前だと `CREATE TABLE IF NOT EXISTS` が先に作った製品の定義のまま黙って通ります
+- `group_id` の値は製品名で始めます（`func_feature` と同じ）。`llm_logs` は製品をまたいで共有するので、同じ値を使うと JOIN で他の製品の行が混ざります。64 文字までです
+- 値は中身から一意に決まる文字列（例 `myapp-c7-s3`）にすると、呼ぶ前に連番を取りに行かずに済みます。集計用のテーブルの行は、企業やサイトを作るとき（か初めて呼ぶとき）に INSERT IGNORE で入れます
+- 呼び出しごとに変わる値（記事 ID・利用者 ID など）は入れません。集計用のテーブルが呼び出しの数だけ増えます。そうした値は `memo` に書きます
+
+## 版を上げるとき
+
+| 版 | DB に流すもの |
+|---|---|
+| v0.2.0 | `group_id` を使うなら `migrations/v0.2.0.sql`（`llm_logs` に `group_id` を足す）。使わないなら何も流さなくてよい。`GroupID` が空の呼び出しは `group_id` を INSERT に含めないので、列の無い DB でもそのまま動く |
 
 ## 気をつけること
 
