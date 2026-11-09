@@ -15,11 +15,12 @@ type Repository interface {
 }
 
 type LLMRepository struct {
-	db *gorm.DB
+	db  *gorm.DB
+	now func() time.Time // Purge が時間帯を確かめる時刻。テストで差し替える
 }
 
 func NewLLMRepository(db *gorm.DB) *LLMRepository {
-	return &LLMRepository{db: db}
+	return &LLMRepository{db: db, now: time.Now}
 }
 
 func (r *LLMRepository) GetConfig(ctx context.Context, feature string) (*LLMFunctionConfig, error) {
@@ -97,65 +98,4 @@ func (r *LLMRepository) UpdateLogValidation(ctx context.Context, logID int64, ap
 			"app_status": appStatus,
 			"app_error":  appError,
 		}).Error
-}
-
-// purgeBatchSize は PurgeOldContent が 1 回の UPDATE で触る行数。
-// mediumtext 2 本を含むため、一括で流すと長時間トランザクションになる。
-const purgeBatchSize = 500
-
-// CountOldContent は before より古く、まだ本文が残っているログの件数を返す。
-func (r *LLMRepository) CountOldContent(ctx context.Context, before time.Time) (int64, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&LLMLog{}).
-		Scopes(oldContent(before)).
-		Count(&count).Error
-	return count, err
-}
-
-// PurgeOldContent は before より古いログの入出力本文だけを NULL にし、更新した行数を返す。
-// 行は消さない。トークン数・モデル名・status はコスト集計と RPD の消費実績に使うため残す。
-func (r *LLMRepository) PurgeOldContent(ctx context.Context, before time.Time) (int64, error) {
-	var (
-		total  int64
-		lastID int64
-	)
-
-	// id カーソルで前進させる。述語だけで回すと、更新が空振りしたときに同じ行を無限に読み直す
-	for {
-		if err := ctx.Err(); err != nil {
-			return total, err
-		}
-
-		var ids []int64
-		if err := r.db.WithContext(ctx).Model(&LLMLog{}).
-			Scopes(oldContent(before)).
-			Where("id > ?", lastID).
-			Order("id").
-			Limit(purgeBatchSize).
-			Pluck("id", &ids).Error; err != nil {
-			return total, err
-		}
-		if len(ids) == 0 {
-			return total, nil
-		}
-		lastID = ids[len(ids)-1]
-
-		res := r.db.WithContext(ctx).Model(&LLMLog{}).
-			Where("id IN ?", ids).
-			Updates(map[string]any{"input_content": nil, "output_content": nil})
-		if res.Error != nil {
-			return total, res.Error
-		}
-		total += res.RowsAffected
-	}
-}
-
-// oldContent は before より古く、入出力の本文がまだ残っているログに絞る。
-// CountOldContent と PurgeOldContent で共有する（ずれると、NULL 化済みの行まで数えて
-// dry-run が毎日同じ件数を報告し続ける）。
-func oldContent(before time.Time) func(*gorm.DB) *gorm.DB {
-	return func(db *gorm.DB) *gorm.DB {
-		return db.Where("created_at < ?", before).
-			Where("input_content IS NOT NULL OR output_content IS NOT NULL")
-	}
 }

@@ -20,7 +20,7 @@ import "github.com/ryokwkm/llm-ledger/llm"
 | `FallbackGeminiClient` | 試す順に並べたモデル（chain）を上から試し、無料枠の超過・提供終了・無応答なら次のモデルへ落ちる。1 日の上限（RPD）を使い切ったモデルは送る前に飛ばす。分あたりの上限（RPM）は API キーとモデルの組ごとに間隔を空ける |
 | `NewDBQuotaSeed` | 常駐プロセスが再起動しても、その日にすでに使った回数を `llm_logs` から取り戻す |
 | `OpenAICompatClient` | OpenAI 互換の API（DeepSeek など）を同じインターフェースで呼ぶ |
-| `LLMRepository.PurgeOldContent` | 古いログの本文（プロンプトと応答）だけを消す。回数とトークン数は残す |
+| `LLMRepository.Purge` | 古いログを条件（期間・`group_id`・`func_feature`）でチャンクに分けて消す。レコードごとか本文だけかを選べ、動いてよい時間帯の外では動かない |
 
 ## 使い方
 
@@ -93,11 +93,33 @@ GROUP BY g.company_id;
 - 値は中身から一意に決まる文字列（例 `myapp-c7-s3`）にすると、呼ぶ前に連番を取りに行かずに済みます。集計用のテーブルの行は、企業やサイトを作るとき（か初めて呼ぶとき）に INSERT IGNORE で入れます
 - 呼び出しごとに変わる値（記事 ID・利用者 ID など）は入れません。集計用のテーブルが呼び出しの数だけ増えます。そうした値は `memo` に書きます
 
+## 古いログを消す
+
+いつ・どの条件で消すかはサービスごとに違うので、使う側の usecase が `PurgeRule` を組み立てて `Purge` を呼びます。起動は使う側の cron などで、`Purge` は渡された時間帯の外では何もせず、時間帯の終わりが来たらチャンクの間で止まります。止まっても、残りは次に呼んだときに条件に当たって消えます。
+
+```go
+res, err := repo.Purge(ctx, llm.PurgeRule{
+	Before:      time.Now().AddDate(-1, 0, 0), // created_at がこれより前のものを消す
+	Target:      llm.PurgeRecords,             // レコードごと消す。本文だけなら llm.PurgeContent
+	GroupPrefix: "myapp-",                     // 任意。GroupIDs（一致の一覧）・Features（func_feature の一覧）でも絞れる
+	ChunkSize:   1000,                         // 任意。省くと 500
+	Window:      llm.PurgeWindow{From: "02:00", To: "05:00"}, // 任意。日をまたぐなら From を後に（23:00〜05:00）
+})
+// res.Affected は消した件数、res.Reason は止まった理由（PurgeCompleted / PurgeOutsideWindow / PurgeWindowEnded）
+```
+
+- 消す前に件数だけ知りたいときは、同じ `PurgeRule` を `CountPurgeTargets` に渡します（時間帯は見ません）
+- `llm_logs` は製品をまたいで共有するので、`GroupPrefix` か `Features` で自分の製品の行に絞ります
+- 条件は全部 AND でつなぎます。時間帯はプロセスのタイムゾーン（`TZ`）で比べます
+- `group_id` を条件にしなければ、`group_id` の列が無い v0.1.0 の DB でも動きます
+- `PurgeOldContent(ctx, before)` は `Purge` の `PurgeContent` を条件なし・時間帯なしで呼ぶのと同じです
+
 ## 版を上げるとき
 
 | 版 | DB に流すもの |
 |---|---|
 | v0.2.0 | `group_id` を使うなら `migrations/v0.2.0.sql`（`llm_logs` に `group_id` を足す）。使わないなら何も流さなくてよい。`GroupID` が空の呼び出しは `group_id` を INSERT に含めないので、列の無い DB でもそのまま動く |
+| v0.3.0 | `Purge` を使うなら `migrations/v0.3.0.sql`（`llm_logs` に `created_at` の index を足す）。流さなくても動くが、期間だけで古いログを探す検索が全件を読む。`PurgeOldContent` は `before` がゼロ値だとエラーを返すようになった |
 
 ## 気をつけること
 

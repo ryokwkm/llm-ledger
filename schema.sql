@@ -38,5 +38,6 @@ CREATE TABLE IF NOT EXISTS `llm_logs` (
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
     PRIMARY KEY (`id`),
     INDEX `idx_func_created` (`func_feature`, `created_at`),
-    INDEX `idx_group_created` (`group_id`, `created_at`)
+    INDEX `idx_group_created` (`group_id`, `created_at`),
+    INDEX `idx_created` (`created_at`)
 ) COMMENT='LLM実行履歴';

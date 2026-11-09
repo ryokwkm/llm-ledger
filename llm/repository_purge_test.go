@@ -146,7 +146,7 @@ func TestPurgeOldContent_バッチ境界を跨いで全件処理する(t *testin
 	db := setupPurgeTestDB(t)
 	repo := NewLLMRepository(db)
 
-	const total = purgeBatchSize + 10
+	const total = defaultPurgeChunkSize + 10
 	for i := 0; i < total; i++ {
 		insertLog(t, db, now.AddDate(0, 0, -100), "古い入力", "古い出力")
 	}
