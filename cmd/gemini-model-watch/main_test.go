@@ -16,7 +16,7 @@ import (
 // LiteLLM の一覧の形を写した見本。先頭の sample_spec は数値のカラムに文字列が入っている。
 const catalogFixture = `{
   "sample_spec": {"max_input_tokens": "max input tokens, if the provider specifies it", "mode": "one of chat"},
-  "gemini/gemini-4-hydrogen": {"mode": "chat", "supported_output_modalities": ["text"], "rpm": 2000.0, "source": "https://aistudio.google.com/docs/pricing#gemini-4-hydrogen"},
+  "gemini/gemini-9-neon": {"mode": "chat", "supported_output_modalities": ["text"], "rpm": 2000.0, "source": "https://aistudio.google.com/docs/pricing#gemini-9-neon"},
   "gemini/gemini-4-argon": {"mode": "chat", "supported_output_modalities": ["text"], "rpm": 2000},
   "gemini/gemini-9-new": {"mode": "chat"},
   "gemini/gemini-3.8-flash": {"mode": "chat", "supported_output_modalities": ["text"]},
@@ -38,7 +38,7 @@ func TestNewTextModels(t *testing.T) {
 	got := newTextModels(catalog, skip)
 
 	// 出力の種類が書かれていないもの（gemini-9-new）は見逃すより通知するほうへ倒す
-	want := []string{"gemini-4-argon", "gemini-4-hydrogen", "gemini-9-new"}
+	want := []string{"gemini-4-argon", "gemini-9-neon", "gemini-9-new"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -59,7 +59,7 @@ func TestSkipSet(t *testing.T) {
 			t.Errorf("%s が除外されていない", id)
 		}
 	}
-	for _, id := range []string{"gemini-4-hydrogen", "関係ない issue", "# コメント", ""} {
+	for _, id := range []string{"gemini-9-neon", "関係ない issue", "# コメント", ""} {
 		if skip[id] {
 			t.Errorf("%q が除外されている", id)
 		}
@@ -76,7 +76,7 @@ func TestClassify(t *testing.T) {
 	}{
 		{"200 は無料枠あり", 200, `{"candidates":[]}`, verdictFree, false},
 		{"429 で limit: 0 は無料枠なし", 429, quotaError("Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-4-argon"), verdictNoFreeTier, false},
-		{"429 で limit が 1 以上は枠あり（使い切っているだけ）", 429, quotaError("Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 5, model: gemini-4-hydrogen"), verdictFree, false},
+		{"429 で limit が 1 以上は枠あり（使い切っているだけ）", 429, quotaError("Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 5, model: gemini-9-neon"), verdictFree, false},
 		{"429 で limit が無いものは判定しない", 429, quotaError("You exceeded your current quota, please check your plan and billing details."), verdictUnknown, false},
 		{"404 は提供なし", 404, `{"error":{"code":404,"message":"models/x is not found","status":"NOT_FOUND"}}`, verdictNotFound, false},
 		{"503 は判定しない", 503, `{"error":{"code":503,"message":"overloaded","status":"UNAVAILABLE"}}`, verdictUnknown, false},
@@ -105,7 +105,7 @@ func TestRun(t *testing.T) {
 		}
 		gotKeys = append(gotKeys, r.Header.Get("x-goog-api-key"))
 		switch r.URL.Path {
-		case "/v1beta/models/gemini-4-hydrogen:generateContent":
+		case "/v1beta/models/gemini-9-neon:generateContent":
 			_, _ = w.Write([]byte(`{"candidates":[]}`))
 		case "/v1beta/models/gemini-4-argon:generateContent":
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -142,10 +142,10 @@ func TestRun(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &n); err != nil {
 		t.Fatalf("出力が JSON でない: %v", err)
 	}
-	if n.Title != issueTitle("gemini-4-hydrogen") {
+	if n.Title != issueTitle("gemini-9-neon") {
 		t.Errorf("title = %q", n.Title)
 	}
-	if !strings.Contains(n.Body, "https://aistudio.google.com/docs/pricing#gemini-4-hydrogen") {
+	if !strings.Contains(n.Body, "https://aistudio.google.com/docs/pricing#gemini-9-neon") {
 		t.Errorf("本文に出典が無い: %q", n.Body)
 	}
 	if !strings.Contains(log.String(), "gemini-4-argon: 無料枠なし") {

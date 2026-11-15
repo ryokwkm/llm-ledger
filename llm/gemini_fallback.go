@@ -43,13 +43,14 @@ type RateLimits map[GeminiModel]time.Duration
 // 値は「RPM から算出したインターバル + 1s 安全マージン」。
 //
 // 実クォータ（無料キーのコンソール確認値）:
-//   - 3.8 / 3.6 Flash, 3 Flash(preview), 2.5 Flash: 5 RPM
+//   - 4 Hydrogen, 3.8 / 3.6 Flash, 3 Flash(preview), 2.5 Flash: 5 RPM
 //   - 3.5 / 3.1 Flash Lite: 15 RPM
 //   - 2.5 Flash Lite: 10 RPM
 //   - 2.5 Pro: 0/0（無料キーでは使えない。有料キーで使うときのために値は持つ）
 //
 // 日次側の上限は DailyQuotasFreeAPIKey（daily_quota.go）。
 var RateLimitsFreeAPIKey = RateLimits{
+	ModelGemini4Hydrogen:     13 * time.Second,
 	ModelGemini38Flash:       13 * time.Second,
 	ModelGemini36Flash:       13 * time.Second,
 	ModelGemini3FlashPreview: 13 * time.Second,

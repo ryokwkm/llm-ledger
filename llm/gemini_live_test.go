@@ -51,6 +51,7 @@ func TestManual_GeminiModels_Live(t *testing.T) {
 
 	// 運用中の chain に出てくるモデルを性能降順で並べる。
 	models := []llm.GeminiModel{
+		llm.ModelGemini4Hydrogen,
 		llm.ModelGemini38Flash,
 		llm.ModelGemini36Flash,
 		llm.ModelGemini3FlashPreview,

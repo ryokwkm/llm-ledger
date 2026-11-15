@@ -506,6 +506,7 @@ func TestFallbackGeminiClient_MinuteQuotaErrorDoesNotMarkExhausted(t *testing.T)
 // RateLimitsFreeAPIKey に必要なモデルが登録されていること。
 func TestRateLimitsFreeAPIKey_HasRequiredModels(t *testing.T) {
 	required := []GeminiModel{
+		ModelGemini4Hydrogen,
 		ModelGemini38Flash,
 		ModelGemini36Flash,
 		ModelGemini3FlashPreview,

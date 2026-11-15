@@ -16,8 +16,10 @@ const (
 	ModelGemini25Flash     GeminiModel = "gemini-2.5-flash"
 	ModelGemini25FlashLite GeminiModel = "gemini-2.5-flash-lite"
 	// 無料枠で実用に耐えるモデル。性能降順に並べている（3 Flash は preview のみだが無料枠表に存在する）。
-	// RPD は Flash 系が 20 / Lite 系が 500（DailyQuotasFreeAPIKey）。
+	// RPD は 4 Hydrogen と Flash 系が 20 / Lite 系が 500（DailyQuotasFreeAPIKey）。
 	// 3.7 / 3.5 Flash は廃止され、要求しても 3.8 / 3.6 Flash が答えるので定数を持たない。
+	// 4 Argon / 4 Carbon は無料枠が無いので定数を持たない。
+	ModelGemini4Hydrogen     GeminiModel = "gemini-4-hydrogen"
 	ModelGemini38Flash       GeminiModel = "gemini-3.8-flash"
 	ModelGemini36Flash       GeminiModel = "gemini-3.6-flash"
 	ModelGemini3FlashPreview GeminiModel = "gemini-3-flash-preview"

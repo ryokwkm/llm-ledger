@@ -35,10 +35,11 @@ type DailyQuotas map[GeminiModel]int
 
 // DailyQuotasFreeAPIKey は Gemini 無料 API キーの RPD（コンソール確認値）。
 //
-// 3.5 / 3.1 Flash Lite だけ RPD 500、それ以外（Flash 系と 2.5 Flash Lite）は 20 と極小。
+// 3.5 / 3.1 Flash Lite だけ RPD 500、それ以外（4 Hydrogen・Flash 系・2.5 Flash Lite）は 20 と極小。
 // この非対称が「上位モデルは重要ステップへ専属で割り当て、量は Flash Lite が吸収する」という
 // chain 設計の根拠になっている。
 var DailyQuotasFreeAPIKey = DailyQuotas{
+	ModelGemini4Hydrogen:     20,
 	ModelGemini38Flash:       20,
 	ModelGemini36Flash:       20,
 	ModelGemini3FlashPreview: 20,

@@ -12,6 +12,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// 片方の表にだけ足すと、RPD は数えるのに連投の間隔を空けない（またはその逆の）モデルができる。
+func TestFreeAPIKeyTablesCoverSameModels(t *testing.T) {
+	for m := range DailyQuotasFreeAPIKey {
+		if _, ok := RateLimitsFreeAPIKey[m]; !ok {
+			t.Errorf("%s が DailyQuotasFreeAPIKey にあるのに RateLimitsFreeAPIKey に無い", m)
+		}
+	}
+}
+
 // dailyQuotaErr は QuotaFailure（日次超過）を Details に積んだ ResourceExhausted エラーを返す。
 func dailyQuotaErr() error {
 	st := status.New(codes.ResourceExhausted, "RESOURCE_EXHAUSTED: quota exceeded")
@@ -267,6 +276,7 @@ func TestNewDBQuotaSeed(t *testing.T) {
 // 抜けがあると上限なし扱いになり、事前切替が効かず 429 を踏み続ける。
 func TestDailyQuotasFreeAPIKey_HasRequiredModels(t *testing.T) {
 	required := []GeminiModel{
+		ModelGemini4Hydrogen,
 		ModelGemini38Flash,
 		ModelGemini36Flash,
 		ModelGemini3FlashPreview,
