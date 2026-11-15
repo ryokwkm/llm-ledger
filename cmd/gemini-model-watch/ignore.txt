@@ -1,0 +1,32 @@
+# 確かめも通知もしないモデル ID（1 行 1 件・# 以降はコメント）。
+# 無料枠の無いモデルはここに書かなくても通知されない（毎日確かめ直すので、後から無料枠が付けば通知される）。
+# 無料枠はあるが要らないモデルは、ここに足すか issue を閉じる。
+
+# 用途違い
+deep-research-max-preview-04-2026
+deep-research-preview-04-2026
+deep-research-pro-preview-12-2025
+gemini-2.5-computer-use-preview-10-2025
+gemini-3.1-pro-preview-customtools
+gemini-robotics-er-2-preview
+gemini-robotics-er-2-streaming-preview
+
+# エイリアス（向け先が黙って変わる）
+gemini-flash-latest
+gemini-flash-lite-latest
+gemini-pro-latest
+
+# 廃止済み（3.5 / 3.7 Flash は 3.6 / 3.8 Flash が答えるので呼び出しが通ってしまう）
+gemini-3.1-flash-lite-preview
+gemini-3.5-flash
+gemini-3.7-flash
+
+# 古い実験版と Gemma（一覧に出力の種類が書かれておらず絞り込みを通る）
+gemini-exp-1114
+gemini-exp-1206
+gemini-gemma-2-27b-it
+gemini-gemma-2-9b-it
+gemma-3-27b-it
+gemma-4-26b-a4b-it
+gemma-4-31b-it
+learnlm-1.5-pro-experimental

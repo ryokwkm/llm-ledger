@@ -1,0 +1,50 @@
+name: gemini-model-watch
+
+# LiteLLM のモデル一覧に載った Gemini の新しいテキストモデルを無料キーで 1 回呼んで無料枠を確かめ、
+# 無料枠があれば issue を立てて Slack へ知らせる。中身は cmd/gemini-model-watch。
+on:
+  schedule:
+    - cron: "0 0 * * *" # 毎日 JST 9 時
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # 閉じた issue も含めて通知済みとして扱い、同じモデルを二度知らせない
+      - name: 通知済みの issue を取得する
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue list --state all --limit 1000 --json title --jq '.[].title' > "$RUNNER_TEMP/notified.txt"
+
+      - name: 新しいモデルの無料枠を確かめる
+        env:
+          GEMINI_FREE_API_KEY: ${{ secrets.GEMINI_FREE_API_KEY }}
+        run: go run ./cmd/gemini-model-watch -notified "$RUNNER_TEMP/notified.txt" > "$RUNNER_TEMP/notices.jsonl"
+
+      - name: issue を立てて Slack へ知らせる
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            title=$(jq -r .title <<<"$line")
+            url=$(gh issue create --title "$title" --body "$(jq -r .body <<<"$line")")
+            if [ -z "$SLACK_WEBHOOK_URL" ]; then
+              echo "::warning::SLACK_WEBHOOK_URL が未登録なので Slack へは送りません: $title"
+              continue
+            fi
+            jq -n --arg text "$title $url" '{text: $text}' |
+              curl -fsS -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+          done < "$RUNNER_TEMP/notices.jsonl"

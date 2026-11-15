@@ -127,6 +127,16 @@ res, err := repo.Purge(ctx, llm.PurgeRule{
 - RPD は API キーごとに減ります。1 本のキーを複数の機能で使うなら、`NewDBQuotaSeed` にその機能を全部並べます。並べ漏れると残りを多く見積もり、429 を踏みに行きます
 - `CallTimeout` には既定値がありません。長文の生成ほど正常でも時間がかかるので、用途ごとに実測から決めます
 
+## 新しい Gemini モデルの通知
+
+GitHub Actions（`.github/workflows/gemini-model-watch.yml`）が毎日 JST 9 時に、LiteLLM のモデル一覧（`model_prices_and_context_window.json`）に載った Gemini のテキストモデルのうち、`RateLimitsFreeAPIKey` / `DailyQuotasFreeAPIKey` に無いものを無料キーで 1 回ずつ呼びます。無料枠があれば issue を立て、Slack へ知らせます。モデルを足す作業は手で行います。
+
+- 無料枠の判定: 200 なら「あり」、429 の本文が `limit: 0` なら「なし」。一覧には無料枠の値が無いので、呼んで確かめる
+- 確かめないモデル: `cmd/gemini-model-watch/ignore.txt`（エイリアス・廃止済み・用途違い）と、issue が立ったことのあるモデル（閉じた issue も含む）
+- secrets: `GEMINI_FREE_API_KEY`（必須）・`SLACK_WEBHOOK_URL`（未登録なら issue だけ立てる）
+- 🔴 `GEMINI_FREE_API_KEY` は課金を有効にしていないプロジェクトのキーにします。課金があると無料枠の無いモデルも 200 で通り、「あり」と誤判定したうえで料金がかかります
+- public のリポジトリでは、60 日間リポジトリに動きが無いと定期実行が止まります（GitHub からメールが来るので、Actions の画面で有効に戻す）
+
 ## テスト
 
 ```
