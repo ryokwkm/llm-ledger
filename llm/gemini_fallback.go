@@ -11,7 +11,6 @@
 //     RPM / TPM は 429 を受けてから下位モデルへフォールバックし、chain 全段が超過した場合は
 //     Google API が返す google.rpc.RetryInfo の retry_delay を抽出して待機 → 先頭から再試行（cap 付き）。
 //   - 無応答は 1 回の送信ごとに CallTimeout で打ち切り、下位モデルへフォールバックする。
-//   - PaidAPIKey があれば、無料キーの chain が全段とも枠切れで答えられなかったときだけ、課金キーの chain で送り直す（paid_key.go）。
 
 package llm
 
@@ -84,12 +83,6 @@ type FallbackConfig struct {
 	// genai の既定は 600 秒で、無応答のまま張り付くと処理が止まり、その失敗が日次上限（llm_function_configs.daily_limit）の枠まで食う。
 	// 正常な生成を切らない長さは用途で違う（長文の生成ほど長い）ので、呼び出し側が実測から決める。
 	CallTimeout time.Duration
-	// PaidAPIKey は、APIKey の chain が全段とも回数の枠切れ（日次の枠切れで送れない・429・提供終了）で答えられなかったときに、
-	// 同じ要求を送り直す課金キー。空なら切り替えない（今までどおり）。無応答が混ざったときは枠切れではないので切り替えない。
-	// 課金キーには RateLimits・DailyQuotas・QuotaSeed を効かせない（どれも無料キーの枠の値なので）。CallTimeout は同じ値を使う。
-	PaidAPIKey string
-	// PaidChain は課金キーで試すモデル列。PaidAPIKey を渡すなら必須。単価がモデルで違うので、Chain を流用せず明示させる。
-	PaidChain []GeminiModel
 }
 
 // FallbackGeminiClient は起点モデルから始め、無料枠超過・無応答時に下位モデルへ自動フォールバックする InternalClient 実装。
@@ -106,8 +99,6 @@ type FallbackGeminiClient struct {
 	quota       *dailyQuotaTracker
 	waitEnabled bool
 	callTimeout time.Duration
-	// paid は課金キーの chain。PaidAPIKey が無ければ nil。
-	paid *FallbackGeminiClient
 }
 
 const (
@@ -130,9 +121,6 @@ func NewFallbackGeminiClient(ctx context.Context, cfg FallbackConfig) (*Fallback
 	if cfg.CallTimeout <= 0 {
 		return nil, fmt.Errorf("CallTimeout is required")
 	}
-	if cfg.PaidAPIKey != "" && len(cfg.PaidChain) == 0 {
-		return nil, fmt.Errorf("PaidChain is required when PaidAPIKey is set")
-	}
 
 	chain := make([]geminiChainClient, 0, len(cfg.Chain))
 	for _, m := range cfg.Chain {
@@ -150,16 +138,6 @@ func NewFallbackGeminiClient(ctx context.Context, cfg FallbackConfig) (*Fallback
 		return nil, fmt.Errorf("日次クォータの消費実績の取り込みに失敗: %w", err)
 	}
 
-	var paid *FallbackGeminiClient
-	if cfg.PaidAPIKey != "" {
-		var err error
-		paid, err = NewFallbackGeminiClient(ctx, paidConfig(cfg))
-		if err != nil {
-			closeChain(chain)
-			return nil, fmt.Errorf("課金キーの chain を作れません: %w", err)
-		}
-	}
-
 	return &FallbackGeminiClient{
 		startModel:  cfg.Chain[0],
 		chain:       chain,
@@ -169,13 +147,7 @@ func NewFallbackGeminiClient(ctx context.Context, cfg FallbackConfig) (*Fallback
 		quota:       quota,
 		waitEnabled: true,
 		callTimeout: cfg.CallTimeout,
-		paid:        paid,
 	}, nil
-}
-
-// paidConfig は課金キーの chain の設定を作る。RateLimits・DailyQuotas・QuotaSeed は無料キーの枠の値なので引き継がない。
-func paidConfig(cfg FallbackConfig) FallbackConfig {
-	return FallbackConfig{Chain: cfg.PaidChain, APIKey: cfg.PaidAPIKey, CallTimeout: cfg.CallTimeout}
 }
 
 // closeChain は構築途中で失敗したとき、作成済みの client を閉じる。後始末なので Close の失敗は捨てる。
@@ -213,9 +185,6 @@ func (c *FallbackGeminiClient) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	if c.paid != nil {
-		errs = append(errs, c.paid.Close())
-	}
 	return errors.Join(errs...)
 }
 
@@ -229,70 +198,49 @@ func (c *FallbackGeminiClient) Close() error {
 //
 // 各モデル呼び出し前に、API キー × モデル単位の rate limiter を取得して必要分待機する。
 // 同一 API キーを共有する他 FallbackGeminiClient と自然に直列化される。
-//
-// 課金キーの chain があれば、上の手順で全段とも枠切れのまま終わったときだけ、課金キーの chain で送り直す。
-// 分あたりの枠切れも切り替える。retry_delay が maxTotalRetryWait に収まれば上の再試行で待つが、
-// 実測の RPM の retry_delay（41〜56 秒・daily_quota.go）は収まらないので、ふつうは待たずに課金キーへ行く。
 func (c *FallbackGeminiClient) CreateChatCompletionWithTokens(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
-	resp, exhausted, err := c.runChain(ctx, req)
-	if err == nil || !exhausted || c.paid == nil {
-		return resp, err
-	}
-	paidResp, paidErr := c.paid.CreateChatCompletionWithTokens(ctx, req)
-	if paidErr != nil {
-		return nil, fmt.Errorf("課金キーでも答えが返りませんでした: %w（無料キー: %w）", paidErr, err)
-	}
-	paidResp.ActualModel = PaidModelName(paidResp.ActualModel)
-	return paidResp, nil
-}
-
-// runChain は chain を試し、枠切れなら retry_delay を待って先頭から試し直す。
-// 失敗のとき exhausted は、最後の 1 周が全段とも枠切れ（日次の枠切れで送れない・429・提供終了）だったかを表す。
-func (c *FallbackGeminiClient) runChain(ctx context.Context, req *ChatRequest) (resp *ChatResponse, exhausted bool, err error) {
 	var totalWait time.Duration
-	var round chainRound
 
 	for attempt := 0; attempt < maxRetryAttempts; attempt++ {
-		round, err = c.tryChain(ctx, req)
+		round, err := c.tryChain(ctx, req)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		if round.resp != nil {
-			return round.resp, false, nil
+			return round.resp, nil
 		}
 		lastErr := round.lastErr
 
 		if lastErr == nil {
 			// 1回も送信していない ＝ chain 全段が日次枠切れ。待機・再試行しても当日は復活しない。
-			return nil, true, fmt.Errorf("%w (start=%s, skipped=%s)", ErrDailyQuotaExhausted, c.startModel, strings.Join(round.skipped, ","))
+			return nil, fmt.Errorf("%w (start=%s, skipped=%s)", ErrDailyQuotaExhausted, c.startModel, strings.Join(round.skipped, ","))
 		}
 
 		// chain 全段が無料枠超過。retry_delay が取れれば待って再試行、取れなければ最終失敗。
 		delay, ok := extractRetryDelay(lastErr)
 		if !ok || delay <= 0 {
-			return nil, !round.timedOut, fmt.Errorf("all gemini models in fallback chain exhausted (start=%s): %w", c.startModel, lastErr)
+			return nil, fmt.Errorf("all gemini models in fallback chain exhausted (start=%s): %w", c.startModel, lastErr)
 		}
 		if totalWait+delay > maxTotalRetryWait {
-			return nil, !round.timedOut, fmt.Errorf("retry budget exhausted after %v wait (start=%s): %w", totalWait, c.startModel, lastErr)
+			return nil, fmt.Errorf("retry budget exhausted after %v wait (start=%s): %w", totalWait, c.startModel, lastErr)
 		}
 		// 最後の試行の後は再試行しないので待たない。
 		if c.waitEnabled && attempt < maxRetryAttempts-1 {
 			if err := sleepContext(ctx, delay); err != nil {
-				return nil, false, err
+				return nil, err
 			}
 		}
 		totalWait += delay
 	}
-	return nil, !round.timedOut, fmt.Errorf("all retry attempts exhausted (start=%s)", c.startModel)
+	return nil, fmt.Errorf("all retry attempts exhausted (start=%s)", c.startModel)
 }
 
 // chainRound は chain を先頭から 1 周した結果。resp が非 nil なら成功。
 // resp が nil で lastErr も nil なら、1回も送信できなかった（全段が日次枠切れ）。
 type chainRound struct {
-	resp     *ChatResponse
-	lastErr  error    // 最後に受けた無料枠超過か無応答のエラー
-	skipped  []string // 日次枠切れで送信しなかったモデル
-	timedOut bool     // 無応答で落ちたモデルがある（枠切れではないので課金キーへ切り替えない）
+	resp    *ChatResponse
+	lastErr error    // 最後に受けた無料枠超過か無応答のエラー
+	skipped []string // 日次枠切れで送信しなかったモデル
 }
 
 // tryChain は chain を先頭から順に試し、無料枠超過・提供終了・無応答なら次のモデルへ落ちる。
@@ -316,7 +264,6 @@ func (c *FallbackGeminiClient) tryChain(ctx context.Context, req *ChatRequest) (
 		switch {
 		case errors.Is(err, errCallTimedOut):
 			// 無応答は Gemini 側の一時的な不調で、同じモデルへ投げ直しても張り付き続けることがあるため次モデルへ。
-			round.timedOut = true
 		case isModelRetired(err):
 			// モデルが提供を終えた（preview は予告なく止まりうる）。投げても 404 なので、日次枠切れと同じく当日は投げない。
 			c.quota.MarkExhausted(model)

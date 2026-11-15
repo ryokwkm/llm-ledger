@@ -17,8 +17,7 @@ import "github.com/ryokwkm/llm-ledger/llm"
 | `GuardedClient` | 呼ぶ前に機能の設定・緊急停止・当日の回数を見て、超えていれば LLM を呼ばずに断る。成功も失敗も断った呼び出しも `llm_logs` に残す |
 | `GuardedClient.Available` | LLM を呼ばず、ログも書かずに「いま呼べるか」だけを返す。ブラウザを開くなど重い準備の前に、断られるかを知るために使う |
 | `LogHandle` | 応答を使った側の検証結果（JSON が読めた・読めなかった）を、そのログ行へ書き戻す |
-| `FallbackGeminiClient` | 試す順に並べたモデル（chain）を上から試し、無料枠の超過・提供終了・無応答なら次のモデルへ落ちる。1 日の上限（RPD）を使い切ったモデルは送る前に飛ばす。分あたりの上限（RPM）は API キーとモデルの組ごとに間隔を空ける。`PaidAPIKey` を渡すと、無料キーの chain を全段使い切ったときに課金キーで送り直す |
-| `PaidKeyFallback` | 通信の方式を問わない課金キーへの切り替え。自前の REST クライアントのように、呼び出しごとに API キーを渡せるもの向け |
+| `FallbackGeminiClient` | 試す順に並べたモデル（chain）を上から試し、無料枠の超過・提供終了・無応答なら次のモデルへ落ちる。1 日の上限（RPD）を使い切ったモデルは送る前に飛ばす。分あたりの上限（RPM）は API キーとモデルの組ごとに間隔を空ける |
 | `NewDBQuotaSeed` | 常駐プロセスが再起動しても、その日にすでに使った回数を `llm_logs` から取り戻す |
 | `OpenAICompatClient` | OpenAI 互換の API（DeepSeek など）を同じインターフェースで呼ぶ |
 | `LLMRepository.Purge` | 古いログを条件（期間・`group_id`・`func_feature`）でチャンクに分けて消す。レコードごとか本文だけかを選べ、動いてよい時間帯の外では動かない |
@@ -57,65 +56,6 @@ if err := json.Unmarshal([]byte(text), &out); err != nil {
 }
 handle.MarkAsValid(ctx)
 ```
-
-## 課金キーへの切り替え
-
-無料キーの回数の枠（1 日・1 分）を使い切ったとき、課金した API キーで同じ要求を送り直して処理を止めません。課金キーを渡さなければ、動きは今までと同じです。
-
-### FallbackGeminiClient で使う
-
-`FallbackConfig` に `PaidAPIKey` と `PaidChain` を足します。
-
-```go
-gemini, err := llm.NewFallbackGeminiClient(ctx, llm.FallbackConfig{
-	// ...（無料キーの設定は今までどおり）
-	PaidAPIKey: os.Getenv("GEMINI_API_KEY_PAID"), // 空なら切り替えない
-	PaidChain:  []llm.GeminiModel{llm.ModelGemini31FlashLite}, // 課金キーで試すモデル。単価が違うので明示する
-})
-```
-
-- 切り替えるのは、無料キーの chain が**全段とも**枠切れ（日次の枠切れで送れない・429・提供終了）で答えられなかったときだけです。上位モデルの枠切れで無料の Lite へ落ちるのは今までどおりで、課金キーは使いません
-- 分あたりの枠切れで全段が 429 になったときも切り替えます。retry_delay が 30 秒以内なら今までどおり待って無料キーで試し直しますが、実測の retry_delay は 41〜56 秒なので、ふつうは待たずに課金キーへ行きます
-- 無応答（`CallTimeout`）が混ざったとき・枠切れ以外のエラーのときは切り替えません
-- 課金キーには `RateLimits`・`DailyQuotas`・`QuotaSeed` を効かせません。`CallTimeout` は同じ値を使います
-
-### 自前のクライアントで使う（PaidKeyFallback）
-
-呼び出しごとに API キーを渡せるクライアント（REST を直接呼ぶものなど）は、`PaidKeyFallback` をプロセスで 1 つ作って使い回します。呼び出しごとに作ると `Cooldown` が効きません。
-
-```go
-keys, err := llm.NewPaidKeyFallback(llm.PaidKeyFallbackConfig{
-	FreeKey:     os.Getenv("GEMINI_API_KEY"),
-	PaidKey:     os.Getenv("GEMINI_API_KEY_PAID"), // 空なら切り替えない
-	IsExhausted: func(err error) bool { /* 自分のエラーの型で 429 かを判定する */ },
-	Cooldown:    30 * time.Minute, // 枠切れを受けたモデルで、無料キーを試し直すまでの間
-})
-
-paid, err := keys.Call(ctx, model, func(ctx context.Context, apiKey string) error {
-	body, err = send(ctx, apiKey, model, req)
-	return err
-})
-// paid が true なら、ChatResponse.ActualModel に llm.PaidModelName(model) を入れて GuardedClient へ返す
-```
-
-- 無料キーの枠切れはモデルごとに覚えます。生成のモデルが枠切れでも、埋め込みのモデルは無料キーから試します
-- `FallbackGeminiClient` は送る前に日次の枠切れを判定して飛ばすので、`Cooldown` を持ちません。`PaidKeyFallback` は判定の手段が 429 しかないため、`Cooldown` が無いと呼ぶたびに無料キーで 429 を 1 往復受けます
-
-### 課金キーで呼んだ回数を数える
-
-課金キーで呼んだ記録は、`llm_logs.model_name` が `paid:` で始まります（例: `paid:gemini-3.1-flash-lite`。カラムは足していません）。
-
-```sql
-SELECT DATE(created_at), func_feature, model_name, COUNT(*), SUM(input_tokens), SUM(output_tokens)
-FROM `system`.`llm_logs`
-WHERE model_name LIKE 'paid:%' AND status = 1
-GROUP BY DATE(created_at), func_feature, model_name;
-```
-
-- `NewDBQuotaSeed` は `paid:` の記録を無料キーの消費に数えません
-- `daily_limit` は課金キーの呼び出しも数えます。課金キーで呼ぶ回数も機能ごとに `daily_limit` で止まるので、1 日の費用の上限は「`daily_limit` × 1 回の最大の料金」です
-- 課金キーでも失敗した呼び出しは、今までどおり起点のモデル名で `failed` として残ります（エラー文に課金キーで失敗したことが入ります）
-- `GuardedClient` を通さない呼び出し（埋め込みなど）は `llm_logs` に残りません
 
 ## テーブル
 
@@ -180,7 +120,6 @@ res, err := repo.Purge(ctx, llm.PurgeRule{
 |---|---|
 | v0.2.0 | `group_id` を使うなら `migrations/v0.2.0.sql`（`llm_logs` に `group_id` を足す）。使わないなら何も流さなくてよい。`GroupID` が空の呼び出しは `group_id` を INSERT に含めないので、列の無い DB でもそのまま動く |
 | v0.3.0 | `Purge` を使うなら `migrations/v0.3.0.sql`（`llm_logs` に `created_at` の index を足す）。流さなくても動くが、期間だけで古いログを探す検索が全件を読む。`PurgeOldContent` は `before` がゼロ値だとエラーを返すようになった |
-| v0.4.0 | 何も流さなくてよい（課金キーの記録は既存の `model_name` に載る） |
 
 ## 気をつけること
 

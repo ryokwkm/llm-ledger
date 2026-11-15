@@ -263,22 +263,6 @@ func TestNewDBQuotaSeed(t *testing.T) {
 	}
 }
 
-// 課金キーで呼んだ記録（model_name に印付き）は、無料キーのモデルの消費に数えない。数えると無料の残りを少なく見積もり、早く課金キーへ切り替わる。
-func TestNewDBQuotaSeed_課金キーの記録は無料のモデルに数えない(t *testing.T) {
-	repo := &fakeUsageRepository{usage: map[string]int{
-		string(ModelGemini38Flash):                3,
-		PaidModelName(string(ModelGemini38Flash)): 50,
-	}}
-
-	got, err := NewDBQuotaSeed(repo, "race-")(context.Background())
-	if err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	if got[ModelGemini38Flash] != 3 {
-		t.Errorf("3.8 Flash の消費 = %d, want 3", got[ModelGemini38Flash])
-	}
-}
-
 // DailyQuotasFreeAPIKey に運用中のモデルが揃っていること。
 // 抜けがあると上限なし扱いになり、事前切替が効かず 429 を踏み続ける。
 func TestDailyQuotasFreeAPIKey_HasRequiredModels(t *testing.T) {
