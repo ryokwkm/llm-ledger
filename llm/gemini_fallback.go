@@ -231,7 +231,8 @@ func (c *FallbackGeminiClient) Close() error {
 // 同一 API キーを共有する他 FallbackGeminiClient と自然に直列化される。
 //
 // 課金キーの chain があれば、上の手順で全段とも枠切れのまま終わったときだけ、課金キーの chain で送り直す。
-// 分あたりの枠切れは上の再試行（最大 maxTotalRetryWait の待ち）を済ませてから切り替える。待てば無料で通るので、費用より待ちを取る。
+// 分あたりの枠切れも切り替える。retry_delay が maxTotalRetryWait に収まれば上の再試行で待つが、
+// 実測の RPM の retry_delay（41〜56 秒・daily_quota.go）は収まらないので、ふつうは待たずに課金キーへ行く。
 func (c *FallbackGeminiClient) CreateChatCompletionWithTokens(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	resp, exhausted, err := c.runChain(ctx, req)
 	if err == nil || !exhausted || c.paid == nil {
